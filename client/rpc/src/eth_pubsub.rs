@@ -20,7 +20,9 @@ use std::{marker::PhantomData, sync::Arc};
 
 use ethereum::TransactionV2 as EthereumTransaction;
 use futures::{future, FutureExt as _, StreamExt as _};
-use jsonrpsee::{core::traits::IdProvider, server::PendingSubscriptionSink};
+use jsonrpsee::{
+	core::traits::IdProvider, PendingSubscriptionSink, SubscriptionMessage, SubscriptionSink,
+};
 // Substrate
 use sc_client_api::{
 	backend::{Backend, StorageProvider},
@@ -28,7 +30,7 @@ use sc_client_api::{
 };
 use sc_network_sync::SyncingService;
 use sc_rpc::{
-	utils::{pipe_from_stream, to_sub_message},
+	utils::{BoundedVecDeque, PendingSubscription},
 	SubscriptionTaskExecutor,
 };
 use sc_transaction_pool_api::{InPoolTransaction, TransactionPool, TxHash};
@@ -197,7 +199,13 @@ where
 			// Best imported block.
 			let current_number = self.client.info().best_number;
 			// Get the target block to sync.
-			let highest_number = self.sync.best_seen_block().await.ok().flatten();
+			let highest_number = self
+				.sync
+				.status()
+				.await
+				.ok()
+				.map(|status| status.best_seen_block)
+				.flatten();
 
 			PubSubSyncing::Syncing(SyncingStatus {
 				starting_block: self.starting_block,
@@ -238,7 +246,9 @@ where
 				Kind::NewHeads => {
 					let stream = block_notification_stream
 						.filter_map(move |notification| pubsub.notify_header(notification));
-					pipe_from_stream(pending, stream).await
+					PendingSubscription::from(pending)
+						.pipe_from_stream(stream, BoundedVecDeque::default())
+						.await
 				}
 				Kind::Logs => {
 					let stream = block_notification_stream
@@ -246,14 +256,18 @@ where
 							pubsub.notify_logs(notification, &filtered_params)
 						})
 						.flat_map(futures::stream::iter);
-					pipe_from_stream(pending, stream).await
+					PendingSubscription::from(pending)
+						.pipe_from_stream(stream, BoundedVecDeque::default())
+						.await
 				}
 				Kind::NewPendingTransactions => {
 					let pool = pubsub.pool.clone();
 					let stream = pool
 						.import_notification_stream()
 						.filter_map(move |hash| pubsub.pending_transaction(&hash));
-					pipe_from_stream(pending, stream).await;
+					PendingSubscription::from(pending)
+						.pipe_from_stream(stream, BoundedVecDeque::default())
+						.await
 				}
 				Kind::Syncing => {
 					let Ok(sink) = pending.accept().await else {
@@ -290,4 +304,9 @@ where
 		self.executor
 			.spawn("frontier-rpc-subscription", Some("rpc"), fut);
 	}
+}
+
+fn to_sub_message(sink: &SubscriptionSink, result: &impl serde::Serialize) -> SubscriptionMessage {
+	SubscriptionMessage::new(sink.method_name(), sink.subscription_id(), result)
+		.expect("Serialize infallible; qed")
 }
