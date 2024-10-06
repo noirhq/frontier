@@ -114,6 +114,7 @@ impl WeightInfo {
 	fn try_consume(&self, cost: u64, limit: u64, usage: u64) -> Result<u64, ExitError> {
 		let usage = usage.checked_add(cost).ok_or(ExitError::OutOfGas)?;
 		if usage > limit {
+			log::debug!(target: "runtime::evm", "consume: usage: {}, limit: {}", usage, limit);
 			return Err(ExitError::OutOfGas);
 		}
 		Ok(usage)
@@ -125,6 +126,7 @@ impl WeightInfo {
 		{
 			let ref_time_usage = self.try_consume(cost, ref_time_limit, ref_time_usage)?;
 			if ref_time_usage > ref_time_limit {
+				log::debug!(target: "runtime::evm", "ref_time: usage: {}, limit: {}", ref_time_usage, ref_time_limit);
 				return Err(ExitError::OutOfGas);
 			}
 			self.ref_time_usage = Some(ref_time_usage);
@@ -138,6 +140,7 @@ impl WeightInfo {
 		{
 			let proof_size_usage = self.try_consume(cost, proof_size_limit, proof_size_usage)?;
 			if proof_size_usage > proof_size_limit {
+				log::debug!(target: "runtime::evm", "proof_size: usage: {}, limit: {}", proof_size_usage, proof_size_limit);
 				return Err(ExitError::OutOfGas);
 			}
 			self.proof_size_usage = Some(proof_size_usage);
